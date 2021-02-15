@@ -12,7 +12,7 @@
 RootModule = 'BW.Utils.GroupPolicy.psm1'
 
 # Version number of this module.
-ModuleVersion = '21.2.10.152600'
+ModuleVersion = '21.2.15.85000'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
