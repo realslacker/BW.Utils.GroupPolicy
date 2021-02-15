@@ -318,3 +318,77 @@ function Get-GPLink {
         ForEach-Object { Set-GPLink -Target $_.DistinguishedName @PSBoundParameters }
 
 }
+
+
+<#
+.SYNOPSIS
+ Import Group Policy backups manifest
+
+.DESCRIPTION
+ Import Group Policy backups manifest into PSCustomObjects
+
+.PARAMETER BackupPath
+ Path to a Group Policy backup repository
+
+.EXAMPLE
+ Get-Item ~\PolicyBackups | Import-GPBackupManifest
+ 
+#>
+function Import-GPBackupManifest {
+
+    param(
+
+        [Parameter(
+            Mandatory,
+            ValueFromPipelineByPropertyName,
+            Position = 1
+        )]
+        [Alias(
+            'FullName',
+            'Path'
+        )]
+        [string]
+        $BackupPath
+
+    )
+
+    # user provided path to backup manifest, not backup folder
+    if ( [System.IO.Path]::GetFileName( $BackupPath ) -eq 'manifest.xml' ) {
+        
+        $BackupPath = [System.IO.Path]::GetDirectoryName( $BackupPath )
+
+    }
+
+    # build the manifest path
+    $ManifestPath = Join-Path $BackupPath 'manifest.xml'
+
+    # check for a manifest
+    if ( -not( Test-Path $ManifestPath ) ) {
+
+        Write-Error 'Path must point to a Group Policy backup repository.'
+        return
+
+    }
+
+    # load the manifest xml
+    [xml]$Manifest = Get-Content -Path $ManifestPath
+
+    # build PSCustomObjects from the xml
+    foreach ( $BackupInst in $Manifest.Backups.BackupInst ) {
+
+        $Object = @{}
+
+        ( $BackupInst | Get-Member -MemberType Property ).Name.ForEach({
+
+            $Object[$_] = $BackupInst.($_).'#cdata-section'
+
+        })
+
+        # include the path to the backup in the object
+        $Object['BackupPath'] = Join-Path $BackupPath $Object.ID
+
+        [pscustomobject]$Object
+
+    }
+
+}
