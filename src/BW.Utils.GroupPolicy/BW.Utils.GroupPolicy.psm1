@@ -385,10 +385,199 @@ function Import-GPBackupManifest {
         })
 
         # include the path to the backup in the object
-        $Object['BackupPath'] = Join-Path $BackupPath $Object.ID
+        $Object['Path'] = Join-Path $BackupPath
 
         [pscustomobject]$Object
 
     }
 
 }
+
+
+<#
+.SYNOPSIS
+ Locate a GPRegistryValue in a domain
+
+.DESCRIPTION
+ Search all Group Policies for a GPRegistryValue in a domain
+
+.PARAMETER Key
+ The registry key to search for
+
+.PARAMETER ValueName
+ The ValueName(s) to search for
+
+.EXAMPLE
+ Find-GPRegistryValue -Key 'HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' -ValueName 'SearchList'
+
+ Will find any GPO where the DNS suffix search list is set.
+#>
+function Find-GPRegistryValue {
+
+    [CmdletBinding()]
+    param(
+
+        [Parameter(
+            Mandatory = $true
+        )]
+        [Alias( 'FullKeyPath' )]
+        [string]
+        $Key,
+
+        [Parameter(
+            Mandatory = $true
+        )]
+        [SupportsWildcards()]
+        [string[]]
+        $ValueName,
+
+        [Parameter(
+            ValueFromPipelineByPropertyName = $true
+        )]
+        [Alias( 'DomainName' )]
+        [string]
+        $Domain,
+
+        [Alias( 'DC' )]
+        [string]
+        $Server
+
+    )
+
+    $GpoSplat = @{}
+    if ( $Domain ) { $GpoSplat.Domain = $Domain }
+    if ( $Server ) { $GpoSplat.Server = $Server }
+
+    Get-GPO -All @GpoSplat | ForEach-Object {
+
+        $GpoChanged = $false
+
+        $GpoObject = $_ | Select-Object *, @{N='Settings'; E={ ,[System.Collections.ArrayList]::new() }}
+
+        Write-Verbose "Searching GPO '$($GpoObject.DisplayName)' ($($GpoObject.Id))"
+
+        Search-GPRegistryValues -Guid $_.Id @PSBoundParameters | ForEach-Object {
+
+            Write-Verbose "  $($_.ValueName): $($_.Value)"
+
+            $GpoObject.Settings.Add( $_ ) > $null
+
+            $GpoChanged = $true
+
+        }
+
+        if ( $GpoChanged ) {
+        
+            return $GpoObject
+
+        }
+                
+    }
+
+}
+
+
+<#
+.SYNOPSIS
+ Find all GPRegistryValues in a given GPO
+
+.DESCRIPTION
+ Find all GPRegistryValues in a given GPO, optionally filtering by name
+
+.PARAMETER Key
+ The registry key to search for
+
+.PARAMETER ValueName
+ The ValueName(s) to search for
+
+.EXAMPLE
+ Search-GPRegistryValues -Key 'HKEY_LOCAL_MACHINE\SOFTWARE'
+
+ Will list all GPRegistryValues in the GPO
+
+.EXAMPLE
+ Search-GPRegistryValues -Key 'HKEY_LOCAL_MACHINE\SOFTWARE' -ValueName '*dns*'
+
+ Will list all GPRegistryValues with a name matching *dns*.
+#>
+function Search-GPRegistryValues {
+
+    [CmdletBinding()]
+    param(
+
+        [Parameter(
+            Mandatory = $true
+        )]
+        [Alias( 'FullKeyPath' )]
+        [string]
+        $Key,
+
+        [SupportsWildcards()]
+        [string[]]
+        $ValueName = '*',
+
+        [Parameter(
+            ParameterSetName = 'GetByName',
+            Mandatory = $true,
+            ValueFromPipeline = $true
+        )]
+        [Alias( 'DisplayName' )]
+        [string]
+        $Name,
+
+        [Parameter(
+            ParameterSetName = 'GetByGUID',
+            Mandatory = $true,
+            ValueFromPipelineByPropertyName = $true
+        )]
+        [Alias( 'Id' )]
+        [guid]
+        $Guid,
+
+        [Parameter(
+            ValueFromPipelineByPropertyName = $true
+        )]
+        [Alias( 'DomainName' )]
+        [string]
+        $Domain,
+
+        [Alias( 'DC' )]
+        [string]
+        $Server
+
+    )
+
+    # remove Key from $PSBoundParameters for splatting
+    $PSBoundParameters.Remove( 'Key' ) > $null
+    $PSBoundParameters.Remove( 'ValueName' ) > $null
+
+    # turn PSProvider path into PSPath
+    if ( $Key -match '^(?<HiveName>\w+:)\\(?<RegistryKey>.*)$' ) {
+
+        $Key = (Get-Item $Matches.HiveName -ErrorAction Stop).PSPath + $Matches.RegistryKey
+
+    }
+    
+    # remove PSPath prefix
+    $Key = $Key -replace '^Microsoft.PowerShell.Core\\Registry::'
+
+    Get-GPRegistryValue -Key $Key @PSBoundParameters -PipelineVariable ValueItem -ErrorAction SilentlyContinue | ForEach-Object {
+
+        if ( $ValueItem.HasValue ) {
+
+            if ( $ValueName | Where-Object { $ValueItem.ValueName -like $_ } ) {
+            
+                $ValueItem
+            
+            }
+
+        } else {
+        
+            Search-GPRegistryValues -Key $ValueItem.FullKeyPath -ValueName $ValueName @PSBoundParameters
+            
+        }
+
+    }
+
+}
+
